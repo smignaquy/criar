@@ -1390,6 +1390,243 @@ var CRX = (function () {
     );
   }
 
+  /* ================================ CALENDARIO ================================ */
+  const TIPOS_CAL = [
+    { id: "nac", l: "Nacimientos", c: "#1B7A4B", bg: "#E6F4EC", ic: "★" },
+    { id: "san", l: "Sanidad", c: "#2E8B8B", bg: "#E3F2F2", ic: "+" },
+    { id: "ale", l: "Alertas", c: "#B93A2B", bg: "#FAEAE7", ic: "!" },
+    { id: "hit", l: "Hitos (destete, doma, cumpleaños)", lc: "Hitos", c: "#B87209", bg: "#FCF1E0", ic: "◆" },
+  ];
+  const tipoCal = (id) => TIPOS_CAL.find((t) => t.id === id);
+  const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+  const DIAS_SEM = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+  const iso = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  const fechaDe = (s) => new Date(s + "T12:00:00");
+  const sumarMeses = (s, n) => { const dt = fechaDe(s); const dia = dt.getDate(); dt.setDate(1); dt.setMonth(dt.getMonth() + n); const ult = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate(); dt.setDate(Math.min(dia, ult)); return iso(dt); };
+  const hoyISO = () => iso(new Date());
+  const diasHasta = (s) => Math.round((fechaDe(s) - fechaDe(hoyISO())) / 864e5);
+  const cuandoTexto = (s) => { const n = diasHasta(s); return n === 0 ? "Hoy" : n === 1 ? "Mañana" : n === -1 ? "Ayer" : n > 0 ? `en ${n} d` : `hace ${-n} d`; };
+  const diaLargo = (s) => { const dt = fechaDe(s); const t = dt.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }); return t[0].toUpperCase() + t.slice(1); };
+
+  function eventosCalendario(a, desde, hasta) {
+    const ev = [];
+    const en = (f) => f && f >= desde && f <= hasta;
+    const propios = (a.caballos || []).filter((c) => !c.ficha);
+    const activos = propios.filter((c) => !c.vendido);
+    propios.forEach((c) => { if (en(c.nacimiento)) ev.push({ id: "n" + c.id, fecha: c.nacimiento, tipo: "nac", titulo: "Nació " + P(c), sub: [c.sexo === "H" ? "Hembra" : c.sexo === "M" ? "Macho" : "", c.pelaje].filter(Boolean).join(" · "), caballoId: c.id }); });
+    activos.forEach((c) => {
+      if (!c.nacimiento) return;
+      const destete = sumarMeses(c.nacimiento, 6), doma = sumarMeses(c.nacimiento, 30);
+      if (en(destete)) ev.push({ id: "d" + c.id, fecha: destete, tipo: "hit", titulo: "Destete · " + P(c), sub: "Cumple 6 meses", caballoId: c.id });
+      if (en(doma)) ev.push({ id: "m" + c.id, fecha: doma, tipo: "hit", titulo: "Inicio de doma · " + P(c), sub: "Cumple 2 años y medio", caballoId: c.id });
+      const y0 = fechaDe(desde).getFullYear(), y1 = fechaDe(hasta).getFullYear();
+      for (let y = y0; y <= y1; y++) {
+        const nac = fechaDe(c.nacimiento), edad = y - nac.getFullYear();
+        if (edad < 1) continue;
+        const f = sumarMeses(c.nacimiento, edad * 12);
+        if (en(f)) ev.push({ id: "c" + c.id + y, fecha: f, tipo: "hit", titulo: `Cumple ${edad} · ${P(c)}`, sub: "Cumpleaños", caballoId: c.id });
+      }
+    });
+    if (puede("sanidad")) {
+      (a.eventos || []).forEach((e) => { if (en(e.fecha)) ev.push({ id: "e" + e.id, fecha: e.fecha, tipo: "san", titulo: nombrePlan(a, e.tipo), sub: idxCal(a)[e.caballoId] ? P(idxCal(a)[e.caballoId]) : "", caballoId: e.caballoId, registro: e }); });
+      if (typeof su === "function") activos.forEach((c) => {
+        su(c, a.eventos || [], a.plan || [], a.lotes || []).forEach((it) => {
+          if (en(it.proxima)) ev.push({ id: "v" + c.id + it.id, fecha: it.proxima, tipo: "san", titulo: "Vence " + it.nombre.toLowerCase(), sub: P(c), caballoId: c.id, vence: true });
+        });
+      });
+    }
+    (a.alertas || []).forEach((al) => { if (!al.hecha && en(al.fecha)) ev.push({ id: "a" + al.id, fecha: al.fecha, tipo: "ale", titulo: al.titulo, sub: al.detalle || "Alerta", alerta: al }); });
+    const orden = { ale: 0, san: 1, nac: 2, hit: 3 };
+    return ev.sort((x, y) => x.fecha.localeCompare(y.fecha) || orden[x.tipo] - orden[y.tipo] || x.titulo.localeCompare(y.titulo));
+  }
+  let _idxA = null, _idx = null;
+  const idxCal = (a) => { if (_idxA !== a) { _idxA = a; _idx = he(a.caballos || []); } return _idx; };
+
+  function useAncho() {
+    const [w, setW] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
+    useEffect(() => { const f = () => setW(window.innerWidth); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f); }, []);
+    return w;
+  }
+
+  function FilaEvento({ e, abrir, conCuando }) {
+    const t = tipoCal(e.tipo);
+    return (
+      <button onClick={() => abrir(e)} className="cr-tap cr-row flex items-center gap-3 w-full text-left px-4 py-2.5" style={{ borderTop: "1px solid " + C.linea }}>
+        <span className="flex items-center justify-center font-bold shrink-0" style={{ width: 34, height: 34, borderRadius: 10, background: t.bg, color: t.c, fontSize: 15 }}>{t.ic}</span>
+        <span className="flex-1 min-w-0">
+          <span className="block font-semibold truncate" style={{ color: C.tinta, fontSize: 14 }}>{e.titulo}</span>
+          {e.sub ? <span className="block truncate" style={{ color: C.tinta2, fontSize: 12 }}>{e.sub}</span> : null}
+        </span>
+        {conCuando ? <span className="shrink-0 font-bold" style={{ fontSize: 12, color: diasHasta(e.fecha) < 0 && e.vence ? C.mal : t.c }}>{cuandoTexto(e.fecha)}</span> : null}
+      </button>
+    );
+  }
+
+  function Calendario({ datos, ir, acc }) {
+    const ancho = useAncho();
+    const movil = ancho < 768;
+    const hoy = hoyISO();
+    const [mes, setMes] = useState(() => { const d0 = new Date(); return new Date(d0.getFullYear(), d0.getMonth(), 1); });
+    const [sel, setSel] = useState(hoy);
+    const [vista, setVista] = useState("mes");
+    const [ocultos, setOcultos] = useState([]);
+    const [caballo, setCaballo] = useState("");
+    const [avisoEl, aviso] = useAviso();
+    const a = datos;
+
+    const primero = new Date(mes), corrimiento = (primero.getDay() + 6) % 7;
+    const inicioGrilla = new Date(primero); inicioGrilla.setDate(1 - corrimiento);
+    const celdas = Array.from({ length: 42 }, (_, i) => { const dt = new Date(inicioGrilla); dt.setDate(inicioGrilla.getDate() + i); return iso(dt); });
+    const desdeMes = iso(primero), hastaMes = iso(new Date(mes.getFullYear(), mes.getMonth() + 1, 0));
+    const todos = eventosCalendario(a, celdas[0], celdas[41] > iso(new Date(Date.now() + 60 * 864e5)) ? celdas[41] : iso(new Date(Date.now() + 60 * 864e5)));
+    const visibles = todos.filter((e) => !ocultos.includes(e.tipo) && (!caballo || e.caballoId === caballo));
+    const porDia = {};
+    visibles.forEach((e) => { (porDia[e.fecha] = porDia[e.fecha] || []).push(e); });
+    const delMes = visibles.filter((e) => e.fecha >= desdeMes && e.fecha <= hastaMes);
+    const proximos = visibles.filter((e) => e.fecha > hoy).slice(0, 8);
+    const delDia = porDia[sel] || [];
+    const tiposVisibles = TIPOS_CAL.filter((t) => t.id !== "san" || puede("sanidad"));
+    const caballos = ke(a.caballos || []).slice().sort((x, y) => P(x).localeCompare(P(y)));
+
+    const abrir = (e) => {
+      if (e.registro) return abrirDetalle({ tipo: "evento", id: e.registro.id });
+      if (e.alerta) return acc && acc.editarAlerta ? acc.editarAlerta(e.alerta) : null;
+      if (e.caballoId) return ir("caballo", e.caballoId);
+    };
+    const mover = (n) => { const m2 = new Date(mes.getFullYear(), mes.getMonth() + n, 1); setMes(m2); setSel(m2.getMonth() === new Date().getMonth() && m2.getFullYear() === new Date().getFullYear() ? hoy : iso(m2)); };
+    const irHoy = () => { const d0 = new Date(); setMes(new Date(d0.getFullYear(), d0.getMonth(), 1)); setSel(hoy); };
+    const exportar = () => {
+      const desde = hoy, hasta = iso(new Date(Date.now() + 365 * 864e5));
+      const lista = eventosCalendario(a, desde, hasta).filter((e) => !ocultos.includes(e.tipo) && (!caballo || e.caballoId === caballo))
+        .map((e) => ({ id: e.id, fecha: e.fecha, titulo: e.titulo, detalle: e.sub || "" }));
+      if (!lista.length) return aviso("No hay eventos para pasar");
+      Lt("criar-calendario.ics", Pg(lista, "CriAr"), "text/calendar;charset=utf-8");
+      aviso(`Listo: ${lista.length} eventos del próximo año. Abrí el archivo para sumarlos a tu calendario`);
+    };
+    const tituloMes = MESES[mes.getMonth()][0].toUpperCase() + MESES[mes.getMonth()].slice(1) + " " + mes.getFullYear();
+    const cuenta = (t) => delMes.filter((e) => e.tipo === t && (t !== "san" || e.vence)).length;
+
+    const filtros = (
+      <div className="flex gap-1.5 flex-wrap items-center">
+        {tiposVisibles.map((t) => {
+          const off = ocultos.includes(t.id);
+          return (
+            <button key={t.id} onClick={() => setOcultos(off ? ocultos.filter((x) => x !== t.id) : [...ocultos, t.id])} className="cr-tap flex items-center gap-1.5 font-semibold"
+              style={{ padding: "5px 11px", borderRadius: 99, fontSize: 12.5, border: "1px solid " + C.linea, background: off ? C.campo : "#fff", color: off ? "#A9BBCE" : C.tinta, textDecoration: off ? "line-through" : "none" }}>
+              <span style={{ width: 9, height: 9, borderRadius: "50%", background: off ? "#C9D6E4" : t.c }} />{movil ? (t.lc || t.l) : t.l}
+            </button>
+          );
+        })}
+        <select value={caballo} onChange={(e) => setCaballo(e.target.value)} className="cr-tap font-semibold" style={{ padding: "5px 10px", borderRadius: 99, fontSize: 12.5, border: "1px solid " + C.linea, background: caballo ? C.azulSuave : "#fff", color: caballo ? C.azul : C.tinta2, maxWidth: 190 }}>
+          <option value="">Todos los caballos</option>
+          {caballos.map((c) => <option key={c.id} value={c.id}>{P(c)}</option>)}
+        </select>
+      </div>
+    );
+
+    const panelDia = (
+      <Tarjeta className="overflow-hidden">
+        <p className="font-bold px-4 pt-3.5 pb-2" style={{ color: C.tinta, fontSize: 16 }}>{diaLargo(sel)}{sel === hoy ? " · hoy" : ""}</p>
+        {delDia.length ? delDia.map((e) => <FilaEvento key={e.id} e={e} abrir={abrir} />) : <p className="px-4 pb-4 text-sm" style={{ color: C.tinta2 }}>Nada para este día.</p>}
+      </Tarjeta>
+    );
+    const panelProximos = (
+      <Tarjeta className="overflow-hidden">
+        <p className="px-4 pt-3 pb-1.5 font-bold uppercase" style={{ color: C.tinta2, fontSize: 11, letterSpacing: ".05em" }}>Próximos días</p>
+        {proximos.length ? proximos.map((e) => <FilaEvento key={e.id} e={e} abrir={abrir} conCuando />) : <p className="px-4 pb-4 text-sm" style={{ color: C.tinta2 }}>Nada en los próximos dos meses.</p>}
+      </Tarjeta>
+    );
+
+    const cabecera = (
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        <button onClick={() => mover(-1)} className="cr-tap flex items-center justify-center" style={{ width: 36, height: 36, borderRadius: 10, background: C.campo, color: C.tinta2 }} aria-label="Mes anterior"><IcAtras size={18} /></button>
+        <p className="font-bold text-center" style={{ color: C.tinta, fontSize: movil ? 17 : 19, minWidth: movil ? 0 : 180, flex: movil ? 1 : "none" }}>{tituloMes}</p>
+        <button onClick={() => mover(1)} className="cr-tap flex items-center justify-center" style={{ width: 36, height: 36, borderRadius: 10, background: C.campo, color: C.tinta2 }} aria-label="Mes siguiente"><IcFlecha size={18} /></button>
+        {!movil ? <>
+          <Boton tono="sec" chico onClick={irHoy}>Hoy</Boton>
+          <div style={{ flex: 1 }} />
+          <FilaSelect valor={vista} onChange={setVista} opciones={[{ id: "mes", l: "Mes" }, { id: "lista", l: "Lista" }]} />
+          <Boton tono="sec" chico onClick={exportar}>Pasar a Google / iPhone</Boton>
+        </> : null}
+      </div>
+    );
+
+    const lista = (
+      <div>
+        {delMes.length ? Object.entries(delMes.reduce((acc2, e) => { (acc2[e.fecha] = acc2[e.fecha] || []).push(e); return acc2; }, {})).map(([f, es]) => (
+          <div key={f}>
+            <p className="px-4 pt-3 pb-1 font-bold" style={{ color: f === hoy ? C.azul : C.tinta, fontSize: 14 }}>{diaLargo(f)}{f === hoy ? " · hoy" : ""}</p>
+            {es.map((e) => <FilaEvento key={e.id} e={e} abrir={abrir} />)}
+          </div>
+        )) : <p className="p-4 text-sm" style={{ color: C.tinta2 }}>Nada en {tituloMes.toLowerCase()}.</p>}
+      </div>
+    );
+
+    return (
+      <div>
+        <Banda titulo="Calendario" bajada={movil ? `${delMes.length} eventos en ${MESES[mes.getMonth()]}` : "Nacimientos, sanidad, alertas e hitos de la cría"} onLogo={() => ir("inicio")}
+          accion={movil ? <Boton tono="claro" chico onClick={exportar}>Pasar al teléfono</Boton> : null}
+          metricas={movil ? undefined : [{ l: "Este mes", v: delMes.length }, { l: "Nacimientos", v: cuenta("nac") }, { l: "Sanidad que vence", v: cuenta("san"), color: cuenta("san") ? "#FFB4A8" : undefined }, { l: "Alertas", v: cuenta("ale") }]} />
+        <div className="p-4" style={{ marginTop: -14 }}>
+          {movil ? (
+            <div className="space-y-3">
+              <Tarjeta className="p-3">
+                {cabecera}
+                <div className="grid" style={{ gridTemplateColumns: "repeat(7,1fr)", gap: 2, textAlign: "center" }}>
+                  {["L", "M", "M", "J", "V", "S", "D"].map((x, i) => <span key={i} style={{ fontSize: 11, fontWeight: 700, color: C.tinta2, padding: "4px 0" }}>{x}</span>)}
+                  {celdas.map((f) => {
+                    const fuera = f < desdeMes || f > hastaMes, es = porDia[f] || [], activo = f === sel;
+                    const colores = [...new Set(es.map((e) => e.tipo))].slice(0, 4);
+                    return (
+                      <button key={f} onClick={() => setSel(f)} className="cr-tap flex flex-col items-center" style={{ height: 46, paddingTop: 6, gap: 3, borderRadius: 12, background: activo ? C.azul : f === hoy ? C.azulSuave : "transparent", color: activo ? "#fff" : fuera ? "#B5C3D3" : C.tinta, fontWeight: 700, fontSize: 14 }}>
+                        {Number(f.slice(8))}
+                        <span className="flex" style={{ gap: 2, height: 6 }}>{colores.map((t) => <span key={t} style={{ width: 5, height: 5, borderRadius: "50%", background: activo ? "#fff" : tipoCal(t).c, opacity: fuera ? 0.5 : 1 }} />)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Tarjeta>
+              <div style={{ overflowX: "auto" }}>{filtros}</div>
+              {panelDia}
+              {panelProximos}
+            </div>
+          ) : (
+            <div className="flex gap-3 items-start">
+              <Tarjeta className="p-4" style={{ flex: 1, minWidth: 0 }}>
+                {cabecera}
+                <div className="mb-3">{filtros}</div>
+                {vista === "lista" ? <div style={{ border: "1px solid " + C.linea, borderRadius: 12, overflow: "hidden" }}>{lista}</div> : (
+                  <div className="grid" style={{ gridTemplateColumns: "repeat(7,minmax(0,1fr))", border: "1px solid " + C.linea, borderRadius: 12, overflow: "hidden" }}>
+                    {DIAS_SEM.map((x) => <div key={x} style={{ fontSize: 11, fontWeight: 700, color: C.tinta2, textTransform: "uppercase", letterSpacing: ".05em", padding: "7px 8px", background: C.campo, borderBottom: "1px solid " + C.linea }}>{x}</div>)}
+                    {celdas.map((f, i) => {
+                      const fuera = f < desdeMes || f > hastaMes, es = porDia[f] || [], activo = f === sel;
+                      return (
+                        <div key={f} onClick={() => setSel(f)} className="cr-tap" style={{ minHeight: 108, padding: "5px 6px", borderRight: (i + 1) % 7 ? "1px solid " + C.linea : "none", borderBottom: i < 35 ? "1px solid " + C.linea : "none", background: activo ? "#F3F8FE" : "#fff", cursor: "pointer", display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+                          <span className="flex items-center justify-center" style={{ width: 24, height: 24, borderRadius: "50%", fontSize: 12.5, fontWeight: 700, background: f === hoy ? C.azul : "transparent", color: f === hoy ? "#fff" : fuera ? "#B5C3D3" : C.tinta, outline: activo && f !== hoy ? "2px solid " + C.azul : "none" }}>{Number(f.slice(8))}</span>
+                          {es.slice(0, 3).map((e) => {
+                            const t = tipoCal(e.tipo);
+                            return <button key={e.id} onClick={(ev) => { ev.stopPropagation(); abrir(e); }} title={e.titulo + (e.sub ? " · " + e.sub : "")} className="text-left font-semibold"
+                              style={{ fontSize: 11.5, padding: "2px 6px", borderRadius: 6, background: t.bg, color: t.c, borderLeft: "3px solid " + t.c, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", opacity: fuera ? 0.55 : 1 }}>{e.titulo}</button>;
+                          })}
+                          {es.length > 3 ? <span style={{ fontSize: 11, color: C.tinta2, fontWeight: 600, paddingLeft: 4 }}>+{es.length - 3} más</span> : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Tarjeta>
+              <div className="space-y-3" style={{ width: 340, flexShrink: 0 }}>
+                {panelDia}
+                {panelProximos}
+              </div>
+            </div>
+          )}
+        </div>
+        {avisoEl}
+      </div>
+    );
+  }
+
   /* ----------------------- botón de cuenta en el menú ----------------------- */
   function BotonCuenta({ ir, activo, enMas }) {
     const s = usar();
@@ -1409,6 +1646,7 @@ var CRX = (function () {
   const botonCuenta = (ir, activo, enMas) => <BotonCuenta key="cuenta" ir={ir} activo={activo} enMas={enMas} />;
 
   const accesoRapido = (l) => l === "Cargar actividad" ? puede("actividad", "carga") : l === "Cargar sanidad" ? puede("sanidad", "carga") : l === "Cargar gasto" ? puede("dinero", "carga") : l === "Agregar caballo" ? puede("caballos", "todo") : true;
-  return { Puerta, Equipo, accesoRapido, proteger, tocarFila, puedeAgregarCaballo: () => puede("caballos", "todo"), MiCuenta, botonCuenta, IcEquipo, navOk, puede, quien, claveDatos, semilla, usar,
+  const IcCalendario = F("calendar-days", [["path", { d: "M8 2v4", key: "a" }], ["path", { d: "M16 2v4", key: "b" }], ["rect", { width: "18", height: "18", x: "3", y: "4", rx: "2", key: "c" }], ["path", { d: "M3 10h18", key: "d" }], ["path", { d: "M8 14h.01", key: "e" }], ["path", { d: "M12 14h.01", key: "f" }], ["path", { d: "M16 14h.01", key: "g" }], ["path", { d: "M8 18h.01", key: "h" }], ["path", { d: "M12 18h.01", key: "i" }]]);
+  return { Puerta, Equipo, Calendario, IcCalendario, accesoRapido, proteger, tocarFila, puedeAgregarCaballo: () => puede("caballos", "todo"), MiCuenta, botonCuenta, IcEquipo, navOk, puede, quien, claveDatos, semilla, usar,
     _prueba: { get: () => estado, cambiar, PLANTILLA, permisosDe } };
 })();
