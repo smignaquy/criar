@@ -41,6 +41,7 @@ rep('(0,u.jsxs)("button",{onClick:()=>{r(!1),o.borrarCaballo(f)}','CRX.puede("ca
 rep('...w.map(L=>({fecha:L.fecha,tipo:L.categoria,','...(CRX.puede("dinero")?w:[]).map(L=>({fecha:L.fecha,tipo:L.categoria,')
 rep('h&&{fecha:h.fecha,tipo:"Venta"','h&&CRX.puede("dinero")&&{fecha:h.fecha,tipo:"Venta"')
 rep('className:"cr-tap cr-card text-left p-3.5 flex flex-col gap-2"','className:"cr-tap cr-card cr-rapido text-left p-3.5 flex flex-col gap-2"',2)
+rep('(0,u.jsx)("button",{onClick:e,className:"cr-tap rounded-full p-2",style:{background:d.campo,color:d.tinta2},"aria-label":"Cerrar"','(0,u.jsx)("button",{onClick:e,className:"cr-tap",style:{background:d.campo,color:d.tinta2,width:40,height:40,minWidth:40,borderRadius:"50%",padding:0,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,lineHeight:0},"aria-label":"Cerrar"')
 h=open('CriAr_12.html').read()
 i=h.index('<script>')+8; j=h.rindex('</script>')
 out=h[:i]+b+h[j:]
